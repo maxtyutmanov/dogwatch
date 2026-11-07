@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Dogwatch" parent="android:Theme.Material.Light">
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:colorPrimary">@color/accent</item>
+        <item name="android:colorPrimaryDark">#8E4B1C</item>
+    </style>
+</resources>

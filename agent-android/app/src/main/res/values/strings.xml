@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Dogwatch</string>
+    <string name="channel_agent">Agent status</string>
+    <string name="notif_running">Dogwatch is running</string>
+</resources>

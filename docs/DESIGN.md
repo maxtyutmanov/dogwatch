@@ -16,7 +16,7 @@ the agent app and its API exist.
 
 | # | Assumption | Why it matters |
 |---|------------|----------------|
-| A1 | The home phone runs **Android 13 (API 33)**, with an **active SIM**. The app still supports Android 7.0+ (API 24+) | Android 13 decides several setup steps: restricted settings, the notification permission, the background camera rule (§8, §9). iOS doesn't let third-party apps read SMS or other apps' notifications. |
+| A1 | The home phone runs **Android 13 (API 33)**, with an **active SIM**. The app supports Android 8.0+ (API 26+) | Android 13 decides several setup steps: restricted settings, the notification permission, the background camera rule (§8, §9). iOS doesn't let third-party apps read SMS or other apps' notifications. |
 | A2 | The phone stays **plugged in and on Wi‑Fi** | Android's Doze mode doesn't kick in while charging, which makes a 24/7 background service practical. |
 | A3 | The app is **sideloaded** (APK via `adb` or a file), not published on Google Play | Play only allows `READ_SMS` for default SMS apps. Sideloading avoids that rule. |
 | A4 | There is **one owner/viewer** (you, maybe a partner), not a multi-tenant product | This keeps auth simple, and no server needs to hold your data. |
@@ -127,16 +127,10 @@ flowchart LR
 ```
 dogwatch/
 ├── agent-android/            # Android app that runs on the old phone
-│   └── app/src/main/
-│       ├── java/…/dogwatch/
-│       │   ├── AgentService.kt
-│       │   ├── server/       # Ktor routes, auth, WebSocket
-│       │   ├── camera/       # CameraController, WebRtcSessionManager, JpegSink
-│       │   ├── sms/          # SmsRepository, models
-│       │   ├── notifications/# NotificationCaptureService, NotificationStore (Room)
-│       │   ├── status/       # DeviceStatusProvider
-│       │   └── ui/           # SetupActivity
-│       └── assets/web/       # ← build output of /web (copied by Gradle task)
+│   ├── core/                 # Pure Kotlin/JVM, unit-tested without a phone:
+│   │                         #   Ktor server, auth, events, audit log, models, dev server
+│   └── app/                  # Android layer: AgentService, SetupActivity, status provider,
+│                             #   camera, SMS and notification sources; bundles web/dist as assets/web/
 ├── web/                      # Viewer SPA (Vite + TS + Preact)
 ├── docs/
 │   └── DESIGN.md
@@ -283,7 +277,7 @@ This toolkit gives remote access to your **SMS (including bank and 2FA codes)** 
 | Risk | Mitigation |
 |------|------------|
 | The OS kills the background service | Foreground service with `START_STICKY`. Ask for a battery-optimization exemption. The setup wizard links to [dontkillmyapp.com](https://dontkillmyapp.com) steps for the phone's maker (Xiaomi, Huawei, Samsung…). |
-| Agent not running after a reboot | A `BOOT_COMPLETED` receiver restarts `AgentService`. |
+| Agent not running after a reboot | A `BOOT_COMPLETED` receiver restarts `AgentService`. Android delivers it only after the **first unlock**, so with a screen lock the phone needs one unlock after every reboot. Tailscale has the same limitation. The setup screen points this out. |
 | **Camera blocked after a background start** (Android 11+ "while-in-use" rule, which applies on the Android 13 target device: a foreground service started from the background can't open the camera or mic) | ⚠️ **Spike in M0 on the actual phone.** Options to test: (a) is a boot-time start exempt on this device? (b) hold `SYSTEM_ALERT_WINDOW` and briefly show a transparent activity on boot; (c) worst case, the status page shows "camera needs one tap on the phone after reboot". Reboots are rare for a phone that's always plugged in. |
 | Android revokes permissions from "unused" apps (Android 11+ app hibernation) | The setup wizard sends you to turn off *App info → Pause app activity if unused*. The status page flags any permission that gets revoked. |
 | Wi‑Fi sleeps or gets slow | `WifiLock` in low-latency or high-performance mode. A watchdog checks connectivity and that Tailscale is up, and shows the result in status. |
@@ -317,13 +311,13 @@ This toolkit gives remote access to your **SMS (including bank and 2FA codes)** 
 | Viewer UI | TypeScript + Preact + Vite | Small bundle, fast to build, ships inside the APK |
 | Connectivity | Tailscale | Mesh VPN, free personal plan, no server to run |
 | Build | Gradle; a Gradle task runs `npm run build` in `web/` and copies the output to assets | One artifact to install |
-| `minSdk` / `targetSdk` | 24 / latest | Covers most phones from 2016 on |
+| `minSdk` / `targetSdk` | 26 / 35 | Covers phones from 2017 on; the embedded Ktor server needs API 26 |
 
 ## 11. Milestones
 
 | # | Milestone | Done when |
 |---|-----------|-----------|
-| **M0** | Skeleton: `AgentService`, Ktor, pairing auth, `/api/status`, web shell, setup wizard. **Spike** on the camera-after-reboot behavior (§8). | Status page loads on a laptop over Tailscale after pairing by QR |
+| **M0** ✅ code done, awaiting on-device test | Skeleton: `AgentService`, Ktor, pairing auth, `/api/status`, web shell, setup wizard. **Spike** on the camera-after-reboot behavior (§8): the agent probes the camera at every start and reports the result. | Status page loads on a laptop over Tailscale after pairing by QR |
 | **M1** | Camera v0: `CameraController`, snapshot, MJPEG | Live picture of the dog in the browser |
 | **M2** | SMS: threads, messages, live updates | A new SMS appears in the browser within 2 s |
 | **M3** | Notifications: listener, store, feed, icons | A WhatsApp or Telegram message shows up in the feed |
