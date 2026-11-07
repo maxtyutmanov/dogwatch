@@ -16,7 +16,7 @@ the agent app and its API exist.
 
 | # | Assumption | Why it matters |
 |---|------------|----------------|
-| A1 | The home phone runs **Android 7.0+ (API 24+)** | iOS doesn't let third-party apps read SMS or other apps' notifications, so on iOS only the camera would be possible. |
+| A1 | The home phone runs **Android 13 (API 33)**, with an **active SIM**. The app still supports Android 7.0+ (API 24+) | Android 13 decides several setup steps: restricted settings, the notification permission, the background camera rule (§8, §9). iOS doesn't let third-party apps read SMS or other apps' notifications. |
 | A2 | The phone stays **plugged in and on Wi‑Fi** | Android's Doze mode doesn't kick in while charging, which makes a 24/7 background service practical. |
 | A3 | The app is **sideloaded** (APK via `adb` or a file), not published on Google Play | Play only allows `READ_SMS` for default SMS apps. Sideloading avoids that rule. |
 | A4 | There is **one owner/viewer** (you, maybe a partner), not a multi-tenant product | This keeps auth simple, and no server needs to hold your data. |
@@ -161,8 +161,8 @@ dogwatch/
   browser's address from incoming connectivity checks (peer-reflexive candidates).
 - Default profile: 1280×720 at 24 fps, capped at 2 Mbps. The viewer can pick a "Low" profile
   (640×360 at 15 fps, 500 kbps) for mobile data.
-- Audio: mic → Opus. On by default, with a mute toggle on the phone side. The agent setting is
-  "allow audio", so the phone owner can turn it off entirely.
+- Audio: mic → Opus, **on by default**. The viewer has a mute toggle. A setting on the phone, "allow audio",
+  turns it off entirely.
 
 **Fallback and utility paths**
 - `GET /api/camera/snapshot.jpg` returns one JPEG. It's useful for thumbnails, debugging and future alerts.
@@ -212,7 +212,8 @@ This is **not complex**: about 200 lines of code, so it's in v1.
   messagesJson, category, postedAt, removedAt)`. Retention: 30 days or 20 000 rows, whichever comes first.
 - App icons are served from `GET /api/apps/{pkg}/icon.png` (rendered from `PackageManager`, cached).
 - **Known limitation:** Android 15+ redacts one-time-password notifications for listener
-  apps that aren't trusted. The full OTP text is still readable through the SMS feature.
+  apps that aren't trusted. This doesn't affect the Android 13 target device, but it would after an OS upgrade.
+  The full OTP text is still readable through the SMS feature.
 
 ### 5.4 Device status
 
@@ -283,7 +284,8 @@ This toolkit gives remote access to your **SMS (including bank and 2FA codes)** 
 |------|------------|
 | The OS kills the background service | Foreground service with `START_STICKY`. Ask for a battery-optimization exemption. The setup wizard links to [dontkillmyapp.com](https://dontkillmyapp.com) steps for the phone's maker (Xiaomi, Huawei, Samsung…). |
 | Agent not running after a reboot | A `BOOT_COMPLETED` receiver restarts `AgentService`. |
-| **Camera blocked after a background start** (Android 11+ "while-in-use" rule: a foreground service started from the background can't open the camera or mic) | ⚠️ **Spike in M0.** Options to test: (a) is a boot-time start exempt on the target device? (b) hold `SYSTEM_ALERT_WINDOW` and briefly show a transparent activity on boot; (c) worst case, the status page shows "camera needs one tap on the phone after reboot". Reboots are rare for a phone that's always plugged in. |
+| **Camera blocked after a background start** (Android 11+ "while-in-use" rule, which applies on the Android 13 target device: a foreground service started from the background can't open the camera or mic) | ⚠️ **Spike in M0 on the actual phone.** Options to test: (a) is a boot-time start exempt on this device? (b) hold `SYSTEM_ALERT_WINDOW` and briefly show a transparent activity on boot; (c) worst case, the status page shows "camera needs one tap on the phone after reboot". Reboots are rare for a phone that's always plugged in. |
+| Android revokes permissions from "unused" apps (Android 11+ app hibernation) | The setup wizard sends you to turn off *App info → Pause app activity if unused*. The status page flags any permission that gets revoked. |
 | Wi‑Fi sleeps or gets slow | `WifiLock` in low-latency or high-performance mode. A watchdog checks connectivity and that Tailscale is up, and shows the result in status. |
 | Tailscale VPN gets disconnected | Tailscale's "Always-on VPN" (Android Settings → VPN). The agent detects the VPN interface and reports it. |
 | Overheating while streaming | The camera is on only while someone watches. If the battery is above 42 °C, drop to the Low profile. Above 45 °C, stop the stream and report why. |
@@ -293,11 +295,14 @@ This toolkit gives remote access to your **SMS (including bank and 2FA codes)** 
 ## 9. Setup flow (user-facing)
 
 1. On the old phone, install Tailscale and sign in. Enable *Always-on VPN*.
-2. Install the Dogwatch APK, for example `adb install dogwatch.apk`.
-   On Android 13+, if you install from a file manager or browser instead, you may need to open
-   *App info → ⋮ → Allow restricted settings* before Android lets you grant notification access.
-3. Open Dogwatch. The wizard asks for Camera, Microphone, SMS, Contacts (optional),
-   Notification access and the battery-optimization exemption.
+2. Install the Dogwatch APK, preferably with `adb install dogwatch.apk` from a computer.
+   Android 13 blocks notification access for apps installed from a file manager or browser.
+   If you install that way, open *App info → ⋮ → Allow restricted settings* first.
+3. Open Dogwatch. The wizard asks for:
+   - runtime permissions: Camera, Microphone, SMS, Contacts (optional), and Notifications
+     (`POST_NOTIFICATIONS`, new in Android 13, so the service's status notification is visible);
+   - special access: Notification access, *Battery → Unrestricted*, and turning off
+     *Pause app activity if unused*.
 4. On your laptop or phone: install Tailscale, sign in with the same account, then scan the
    QR code shown by Dogwatch. Done.
 
@@ -336,9 +341,11 @@ This toolkit gives remote access to your **SMS (including bank and 2FA codes)** 
 - **Native viewer app** with real push notifications, if the web app isn't enough.
 - MMS support, and multiple home devices.
 
-## 13. Open questions for you
+## 13. Decisions log
 
-1. Which phone and Android version is the home device? This determines the reboot/camera spike, `minSdk` and any manufacturer-specific battery-killer workarounds.
-2. Are you OK with Tailscale (or a similar mesh VPN such as ZeroTier or Headscale) on the viewer devices? If not, we revisit Option B.
-3. Do you want audio in the stream on by default?
-4. Does the phone have an active SIM? If not, the SMS feature can be dropped from v1.
+| Question | Decision |
+|----------|----------|
+| Home device OS | Android, probably 13. Check the exact version and phone maker at the start of M0, since the reboot/camera spike and the battery-killer workarounds depend on them. |
+| Connectivity | Tailscale on the home phone and on every viewer device (Option A). |
+| Audio | On by default, can be muted. |
+| SIM | Active, so SMS stays in v1. |
